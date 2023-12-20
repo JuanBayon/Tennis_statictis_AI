@@ -1,6 +1,5 @@
 package com.uoc.tennis
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -12,6 +11,7 @@ import android.view.View
 import android.widget.Button
 import com.uoc.tennis.databinding.ActivityMainBinding
 import android.hardware.SensorEventListener
+import android.util.Log
 import android.view.View.OnClickListener
 import android.widget.TextView
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -20,6 +20,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.uoc.tennis.AI.Model
 import com.uoc.tennis.AI.StrokeTypes
 import com.uoc.tennis.AI.TransformSensorData
+import java.lang.Exception
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -27,7 +28,7 @@ class MainActivity : Activity(), SensorEventListener, OnClickListener {
 
     private lateinit var binding: ActivityMainBinding
     private val dataArray: ArrayList<SensorData> = java.util.ArrayList()
-    private var dataAnalyzed: ArrayList<StrokeTypes> = ArrayList()
+    private var dataAnalyzed: ArrayList<StrokeTypes>? = ArrayList()
     private var mSensorManager: SensorManager? = null
     private var mAccelerometer: Sensor? = null
     private var mGyroscope: Sensor? = null
@@ -53,8 +54,6 @@ class MainActivity : Activity(), SensorEventListener, OnClickListener {
     data class SensorData(
         val x: Double, val y: Double, val z: Double,
         val timestamp: String, val sensor: String, val sessionID: Int)
-
-    //TODO try/catch y logger
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,23 +102,24 @@ class MainActivity : Activity(), SensorEventListener, OnClickListener {
                 text!!.setText(R.string.stoppedText)
                 title!!.setText(R.string.stoppedTitle)
                 mSensorManager!!.unregisterListener(this)
-                dataAnalyzed = analizeData()
-                //saveInDatabase()
+                dataAnalyzed = analyzeData()
+                saveInDatabase()
                 button!!.visibility = View.GONE
                 sessionInfo!!.text = EXIT
                 sessionInfo!!.visibility = View.VISIBLE
                 sessionInfo!!.setOnClickListener {
                     finish()
                 }
-                val smashNumber = dataAnalyzed.count { x -> x == StrokeTypes.SMASH }
-                val driveNumber = dataAnalyzed.count { x -> x == StrokeTypes.DRIVE }
-                val backhandNumber = dataAnalyzed.count { x -> x == StrokeTypes.BACKHAND }
-                val serviceNumber = dataAnalyzed.count { x -> x == StrokeTypes.SERVICE }
-                val vrNumber = dataAnalyzed.count { x -> x == StrokeTypes.VR }
-                val vlNumber = dataAnalyzed.count { x -> x == StrokeTypes.VL }
+                val smashNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.SMASH }
+                val driveNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.DRIVE }
+                val backhandNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.BACKHAND }
+                val serviceNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.SERVICE }
+                val vrNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.VR }
+                val vlNumber = dataAnalyzed!!.count { x -> x == StrokeTypes.VL }
                 textTitle!!.text = "${SMASH}: ${smashNumber}\n ${DRIVE}: ${driveNumber}\n ${BACKHAND}: ${backhandNumber}\n" +
                         "${SERVICE}: ${serviceNumber}\n ${VR}: ${vrNumber}\n ${VL}: ${vlNumber}\n"
             }
+            //TODO SHOW THE RESULTS IN THE A NEW ACTIVITY
         }
     }
 
@@ -144,38 +144,59 @@ class MainActivity : Activity(), SensorEventListener, OnClickListener {
         age = data.getStringExtra(AGE)!!
         laterality = data.getStringExtra(LATERALITY)!!
         backhand = data.getStringExtra(BACKHAND)!!
+        Log.i(getString(R.string.config), getString(R.string.data))
     }
 
-    private fun analizeData(): ArrayList<StrokeTypes> {
-        val result: ArrayList<StrokeTypes> = ArrayList()
-        /*val td = TransformSensorData(dataArray, gender, age, laterality, backhand, hitType, playerType)
-        val mapList = td.getStatisticalData()
-        for (i in mapList.size -1  downTo 0) {
-            result.add(Model.getPrediction(mapList.elementAt(i)))
-        }*/
-        val list = getExample()
-        val pred = Model.getPrediction(list, this)
-        result.add(pred)
-
-        return result
+    /**
+     * The function returns the list of recognized strokes, from the list captured by the sensors.
+     */
+    private fun analyzeData(): ArrayList<StrokeTypes>? {
+        try {
+            val result: ArrayList<StrokeTypes> = ArrayList()
+            val td = TransformSensorData(dataArray, gender, age, laterality, backhand, hitType, playerType)
+            val mapList = td.getStatisticalData()
+            for (i in mapList.size -1  downTo 0) {
+                result.add(Model.getPrediction(mapList.elementAt(i), this))
+            }
+            // TEST EXAMPLE FOR THE PREDICTION MODEL
+            //val list = getExample()
+            //val pred = Model.getPrediction(list, this)
+            //result.add(pred)
+            return result
+            Log.i(getString(R.string.analyze), getString(R.string.data))
+        } catch (e: Exception){
+            Log.e(getString(R.string.error), getString(R.string.data_error) + e.message)
+        }
+        return null
     }
 
+    /**
+     * Saves in FireStore all the data present in the list of SensorData and the attributes of the session.
+     */
     private fun saveInDatabase() {
-        val hashMap = hashMapOf(
-            ENTRIES to dataArray.map { jacksonMapper.convertValue(it, Map::class.java) },
-            PLAYER_TYPE to playerType,
-            STROKE_TYPE to hitType,
-            GENDER to gender,
-            NUM_ENTRIES to numberDatum,
-            LATERALITY to laterality,
-            BACKHAND to backhand,
-            AGE to age
-        )
-        dataArray.clear()
-        numberDatum = INITIAL_DATUM
-        firebase.collection(COLLECTION).add(hashMap)
+        try {
+            val hashMap = hashMapOf(
+                ENTRIES to dataArray.map { jacksonMapper.convertValue(it, Map::class.java) },
+                PLAYER_TYPE to playerType,
+                STROKE_TYPE to hitType,
+                GENDER to gender,
+                NUM_ENTRIES to numberDatum,
+                LATERALITY to laterality,
+                BACKHAND to backhand,
+                AGE to age
+            )
+            dataArray.clear()
+            numberDatum = INITIAL_DATUM
+            firebase.collection(COLLECTION).add(hashMap)
+            Log.i(getString(R.string.firebase), getString(R.string.data))
+        } catch (e: Exception){
+            Log.e(getString(R.string.error), getString(R.string.data_error) + e.message)
+        }
     }
 
+    /**
+     * Provides an example with all the fields to be used to predict with the model.
+     */
     private fun getExample(): HashMap<String, Any> {
         val result =  HashMap<String, Any>()
         result["x_mean_acc"] = 0.119
